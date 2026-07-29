@@ -1,0 +1,32 @@
+# Model bundles (downloaded via scripts/download_model.py, not committed)
+models/
+*.task
+
+# Alarm/audio assets that users supply locally
+assets/*.wav
+assets/*.ogg
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tooling / caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
