@@ -12,9 +12,13 @@ import pytest
 from src.config import LandmarkIndices
 from src.metrics import (
     average_ear,
+    blendshape_scores,
+    blink_score,
     eye_aspect_ratio,
+    eyes_closed_from_blendshapes,
     landmarks_to_array,
     mouth_aspect_ratio,
+    yawn_from_blendshapes,
 )
 
 INDICES = LandmarkIndices()
@@ -86,6 +90,44 @@ def test_aspect_ratio_rejects_wrong_shape() -> None:
     with pytest.raises(ValueError):
         # Only five indices -> not a (6, 2) slice.
         eye_aspect_ratio(landmarks, INDICES.left_eye[:5])
+
+
+class _Category:
+    """Minimal stand-in for a MediaPipe blendshape category."""
+
+    def __init__(self, category_name: str, score: float) -> None:
+        self.category_name = category_name
+        self.score = score
+
+
+def test_blendshape_scores_builds_name_to_score_map() -> None:
+    categories = [
+        _Category("eyeBlinkLeft", 0.8),
+        _Category("eyeBlinkRight", 0.6),
+        _Category("jawOpen", 0.1),
+    ]
+    scores = blendshape_scores(categories)
+    assert scores == pytest.approx(
+        {"eyeBlinkLeft": 0.8, "eyeBlinkRight": 0.6, "jawOpen": 0.1}
+    )
+
+
+def test_blink_score_averages_both_eyes() -> None:
+    assert blink_score({"eyeBlinkLeft": 0.9, "eyeBlinkRight": 0.5}) == pytest.approx(0.7)
+
+
+def test_eyes_closed_from_blendshapes_thresholding() -> None:
+    closed = {"eyeBlinkLeft": 0.7, "eyeBlinkRight": 0.7}
+    open_eyes = {"eyeBlinkLeft": 0.1, "eyeBlinkRight": 0.2}
+    assert eyes_closed_from_blendshapes(closed) is True
+    assert eyes_closed_from_blendshapes(open_eyes) is False
+
+
+def test_yawn_from_blendshapes_thresholding() -> None:
+    assert yawn_from_blendshapes({"jawOpen": 0.9}) is True
+    assert yawn_from_blendshapes({"jawOpen": 0.2}) is False
+    # Missing key defaults to 0.0 -> no yawn.
+    assert yawn_from_blendshapes({}) is False
 
 
 def test_landmarks_to_array_scales_to_pixels() -> None:
