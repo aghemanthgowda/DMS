@@ -56,6 +56,12 @@ class Thresholds:
     jaw_open_blendshape: float = 0.50
     """``jawOpen`` blendshape score at/above which a yawn is deemed present."""
 
+    yaw_distraction_deg: float = 30.0
+    """Absolute head yaw (degrees) beyond which the driver is looking away."""
+
+    distraction_seconds: float = 2.0
+    """Seconds of sustained off-axis yaw before distraction is flagged."""
+
 
 @dataclass(frozen=True)
 class Config:

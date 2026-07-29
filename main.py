@@ -27,11 +27,13 @@ from src.landmarks import FaceLandmarkerStream
 from src.metrics import (
     average_ear,
     blendshape_scores,
+    default_camera_matrix,
+    estimate_head_pose,
     landmarks_to_array,
     mouth_aspect_ratio,
     yawn_from_blendshapes,
 )
-from src.state import DrowsinessMonitor, DrowsinessState
+from src.state import DistractionTracker, DrowsinessMonitor, DrowsinessState
 
 
 def parse_args() -> argparse.Namespace:
@@ -106,15 +108,20 @@ def draw_overlay(
     perclos: float,
     state: DrowsinessState,
     yawn: bool = False,
+    yaw: float = 0.0,
+    distracted: bool = False,
 ) -> None:
     """Draw the metrics HUD onto ``frame`` in place."""
-    colour = (0, 0, 255) if state is DrowsinessState.DROWSY else (0, 255, 0)
+    alert = state is DrowsinessState.DROWSY or distracted
+    colour = (0, 0, 255) if alert else (0, 255, 0)
+    status = state.value + (" | DISTRACTED" if distracted else "")
     lines = [
         f"FPS:     {fps:5.1f}",
         f"EAR:     {ear:5.3f}",
         f"MAR:     {mar:5.3f}",
         f"PERCLOS: {perclos * 100:5.1f}%",
-        f"STATE:   {state.value}",
+        f"YAW:     {yaw:5.1f} deg",
+        f"STATE:   {status}",
         f"YAWN:    {'yes' if yawn else 'no'}",
     ]
     for i, text in enumerate(lines):
@@ -146,7 +153,13 @@ def run(config: Config) -> None:
                 config = replace(config, thresholds=thresholds)
 
         monitor = DrowsinessMonitor(thresholds)
+        distraction = DistractionTracker(
+            thresholds.yaw_distraction_deg, thresholds.distraction_seconds
+        )
         alarm = AudioAlarm(config.alarm_sound, enabled=config.audio_enabled)
+        camera_matrix = default_camera_matrix(
+            config.frame_width, config.frame_height
+        )
         last_time = time.monotonic()
         fps = 0.0
 
@@ -168,6 +181,8 @@ def run(config: Config) -> None:
 
                 ear = mar = 0.0
                 yawn = False
+                yaw = 0.0
+                distracted = False
                 if result is not None and result.face_landmarks:
                     points = landmarks_to_array(
                         result.face_landmarks[0], frame.shape[1], frame.shape[0]
@@ -187,13 +202,20 @@ def run(config: Config) -> None:
                         )
                     yawn = yawn_geom and yawn_bs
 
+                    pose = estimate_head_pose(points, camera_matrix)
+                    if pose is not None:
+                        yaw, _pitch, _roll = pose
+                        distracted = distraction.update(yaw, now)
+
                 state = monitor.update(ear, mar, now)
-                if state is DrowsinessState.DROWSY:
+                if state is DrowsinessState.DROWSY or distracted:
                     alarm.start()
                 else:
                     alarm.stop()
 
-                draw_overlay(frame, fps, ear, mar, monitor.perclos, state, yawn)
+                draw_overlay(
+                    frame, fps, ear, mar, monitor.perclos, state, yawn, yaw, distracted
+                )
                 cv2.imshow("Driver Monitoring System", frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break

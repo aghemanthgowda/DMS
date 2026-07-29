@@ -8,8 +8,9 @@ normalised landmark lists into that form.
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Optional, Sequence
 
+import cv2
 import numpy as np
 
 _EPSILON = 1e-6
@@ -157,3 +158,102 @@ def yawn_from_blendshapes(
         threshold: ``jawOpen`` score at or above which a yawn is deemed present.
     """
     return scores.get(JAW_OPEN_BLENDSHAPE, 0.0) >= threshold
+
+
+# ---------------------------------------------------------------------------
+# Head pose estimation (cv2.solvePnP against a generic 3D face model)
+# ---------------------------------------------------------------------------
+
+# A canonical, roughly life-sized 3D face model in millimetres. The origin sits
+# near the nose tip; +x is to the subject's left, +y is up, +z is toward the
+# camera. These six points pair with the MediaPipe indices in
+# :data:`HEAD_POSE_LANDMARKS`.
+MODEL_POINTS_3D: np.ndarray = np.array(
+    [
+        (0.0, 0.0, 0.0),        # nose tip
+        (0.0, -63.6, -12.5),    # chin
+        (-43.3, 32.7, -26.0),   # left eye outer corner
+        (43.3, 32.7, -26.0),    # right eye outer corner
+        (-28.9, -28.9, -24.1),  # left mouth corner
+        (28.9, -28.9, -24.1),   # right mouth corner
+    ],
+    dtype=np.float64,
+)
+
+# MediaPipe FaceLandmarker indices matching MODEL_POINTS_3D, in the same order.
+HEAD_POSE_LANDMARKS: tuple[int, int, int, int, int, int] = (1, 152, 33, 263, 61, 291)
+
+
+def default_camera_matrix(image_width: int, image_height: int) -> np.ndarray:
+    """Return an approximate pinhole camera matrix for a webcam.
+
+    Uses the image width as the focal length and the image centre as the
+    principal point, which is a standard assumption when the camera is
+    uncalibrated.
+
+    Args:
+        image_width: Frame width in pixels.
+        image_height: Frame height in pixels.
+
+    Returns:
+        A ``(3, 3)`` intrinsic camera matrix.
+    """
+    focal_length = float(image_width)
+    return np.array(
+        [
+            [focal_length, 0.0, image_width / 2.0],
+            [0.0, focal_length, image_height / 2.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
+
+
+def _rotation_to_euler(rotation_matrix: np.ndarray) -> tuple[float, float, float]:
+    """Decompose a rotation matrix into ``(yaw, pitch, roll)`` degrees.
+
+    Args:
+        rotation_matrix: A ``(3, 3)`` rotation matrix.
+
+    Returns:
+        ``(yaw, pitch, roll)`` in degrees, rotations about the y, x and z axes.
+    """
+    angles = cv2.RQDecomp3x3(rotation_matrix)[0]
+    pitch, yaw, roll = float(angles[0]), float(angles[1]), float(angles[2])
+    return yaw, pitch, roll
+
+
+def estimate_head_pose(
+    landmarks: np.ndarray,
+    camera_matrix: np.ndarray,
+    dist_coeffs: Optional[np.ndarray] = None,
+) -> Optional[tuple[float, float, float]]:
+    """Estimate head orientation with ``cv2.solvePnP``.
+
+    Args:
+        landmarks: ``(N, 2)`` array of pixel coordinates.
+        camera_matrix: A ``(3, 3)`` intrinsic camera matrix (see
+            :func:`default_camera_matrix`).
+        dist_coeffs: Optional lens distortion coefficients; zeros if ``None``.
+
+    Returns:
+        ``(yaw, pitch, roll)`` in degrees, or ``None`` if the solver fails.
+    """
+    if dist_coeffs is None:
+        dist_coeffs = np.zeros((4, 1), dtype=np.float64)
+
+    image_points = np.ascontiguousarray(
+        landmarks[list(HEAD_POSE_LANDMARKS)], dtype=np.float64
+    )
+    success, rotation_vector, _ = cv2.solvePnP(
+        MODEL_POINTS_3D,
+        image_points,
+        camera_matrix,
+        dist_coeffs,
+        flags=cv2.SOLVEPNP_ITERATIVE,
+    )
+    if not success:
+        return None
+
+    rotation_matrix, _ = cv2.Rodrigues(rotation_vector)
+    return _rotation_to_euler(rotation_matrix)
