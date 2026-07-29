@@ -36,10 +36,13 @@ class Thresholds:
     """MAR above this value marks the mouth as yawning."""
 
     perclos_drowsy: float = 0.40
-    """PERCLOS (fraction of time eyes closed) above this marks drowsiness."""
+    """PERCLOS at/above which the driver enters the DROWSY state."""
 
-    perclos_window_frames: int = 900
-    """Rolling window length in frames for the scaffold PERCLOS estimate."""
+    perclos_recover: float = 0.30
+    """PERCLOS at/below which the driver returns to AWAKE (hysteresis)."""
+
+    perclos_window_seconds: float = 60.0
+    """Length of the rolling time window used to estimate PERCLOS."""
 
     calibration_seconds: float = 5.0
     """Seconds of baseline sampling when ``--calibrate`` is used."""
