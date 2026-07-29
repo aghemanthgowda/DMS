@@ -100,3 +100,60 @@ def average_ear(
     left = eye_aspect_ratio(landmarks, left_eye_indices)
     right = eye_aspect_ratio(landmarks, right_eye_indices)
     return 0.5 * (left + right)
+
+
+# ---------------------------------------------------------------------------
+# Blendshape cross-checks
+#
+# MediaPipe's FaceLandmarker can emit 52 ARKit-style blendshape scores in
+# ``[0, 1]``. These learned scores give an independent second opinion on the
+# purely geometric EAR/MAR, which helps in poses where the 2D landmark geometry
+# alone is ambiguous.
+# ---------------------------------------------------------------------------
+
+BLINK_BLENDSHAPES: tuple[str, str] = ("eyeBlinkLeft", "eyeBlinkRight")
+JAW_OPEN_BLENDSHAPE: str = "jawOpen"
+
+
+def blendshape_scores(face_blendshapes: Sequence[object]) -> dict[str, float]:
+    """Convert a MediaPipe blendshape category list to a ``{name: score}`` map.
+
+    Args:
+        face_blendshapes: Sequence of objects exposing ``.category_name`` and
+            ``.score``, as found in ``FaceLandmarkerResult.face_blendshapes[i]``.
+
+    Returns:
+        A mapping from blendshape name to its score in ``[0, 1]``.
+    """
+    return {shape.category_name: float(shape.score) for shape in face_blendshapes}
+
+
+def blink_score(scores: dict[str, float]) -> float:
+    """Return the mean of the left/right eye-blink blendshape scores."""
+    left = scores.get(BLINK_BLENDSHAPES[0], 0.0)
+    right = scores.get(BLINK_BLENDSHAPES[1], 0.0)
+    return 0.5 * (left + right)
+
+
+def eyes_closed_from_blendshapes(
+    scores: dict[str, float], threshold: float = 0.5
+) -> bool:
+    """Return ``True`` when the eye-blink blendshapes indicate closed eyes.
+
+    Args:
+        scores: Blendshape map from :func:`blendshape_scores`.
+        threshold: Mean blink score at or above which eyes are deemed closed.
+    """
+    return blink_score(scores) >= threshold
+
+
+def yawn_from_blendshapes(
+    scores: dict[str, float], threshold: float = 0.5
+) -> bool:
+    """Return ``True`` when the ``jawOpen`` blendshape indicates a yawn.
+
+    Args:
+        scores: Blendshape map from :func:`blendshape_scores`.
+        threshold: ``jawOpen`` score at or above which a yawn is deemed present.
+    """
+    return scores.get(JAW_OPEN_BLENDSHAPE, 0.0) >= threshold

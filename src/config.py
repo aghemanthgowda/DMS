@@ -47,6 +47,12 @@ class Thresholds:
     calibration_ear_factor: float = 0.75
     """Closed-eye threshold as a fraction of the calibrated open-eye baseline."""
 
+    blink_blendshape: float = 0.50
+    """Mean eye-blink blendshape score at/above which eyes are deemed closed."""
+
+    jaw_open_blendshape: float = 0.50
+    """``jawOpen`` blendshape score at/above which a yawn is deemed present."""
+
 
 @dataclass(frozen=True)
 class Config:
