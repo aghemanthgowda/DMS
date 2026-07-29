@@ -187,7 +187,7 @@ def run(config: Config) -> None:
                         )
                     yawn = yawn_geom and yawn_bs
 
-                state = monitor.update(ear, mar)
+                state = monitor.update(ear, mar, now)
                 if state is DrowsinessState.DROWSY:
                     alarm.start()
                 else:
