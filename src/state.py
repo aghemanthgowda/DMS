@@ -1,8 +1,9 @@
 """Drowsiness state tracking.
 
-The scaffold implementation estimates PERCLOS (the proportion of time the eyes
-are closed) over a fixed-length *frame* window and drives a small state machine.
-A later change replaces the frame window with a true time-based rolling window.
+PERCLOS (the proportion of time the eyes are closed) is estimated over a true
+*time-based* rolling window rather than a fixed frame count, so the measure is
+robust to a varying frame rate. A small hysteresis state machine converts the
+continuous PERCLOS signal into a debounced AWAKE/DROWSY classification.
 """
 
 from __future__ import annotations
@@ -21,44 +22,73 @@ class DrowsinessState(Enum):
 
 
 class PerclosTracker:
-    """Rolling PERCLOS estimate over the most recent ``window_frames`` frames."""
+    """Rolling PERCLOS estimate over the most recent ``window_seconds`` seconds.
 
-    def __init__(self, window_frames: int) -> None:
+    Samples are stored as ``(timestamp, eyes_closed)`` pairs in a deque; on each
+    update, samples older than the window are evicted. PERCLOS is the fraction of
+    retained samples in which the eyes were closed.
+    """
+
+    def __init__(self, window_seconds: float = 60.0) -> None:
         """Create a tracker.
 
         Args:
-            window_frames: Number of recent frames to average over. Must be > 0.
+            window_seconds: Length of the rolling window in seconds. Must be > 0.
 
         Raises:
-            ValueError: If ``window_frames`` is not positive.
+            ValueError: If ``window_seconds`` is not positive.
         """
-        if window_frames <= 0:
-            raise ValueError("window_frames must be positive")
-        self._window: deque[int] = deque(maxlen=window_frames)
+        if window_seconds <= 0:
+            raise ValueError("window_seconds must be positive")
+        self._window_seconds = window_seconds
+        self._samples: deque[tuple[float, bool]] = deque()
 
-    def update(self, eyes_closed: bool) -> float:
-        """Record a frame and return the current PERCLOS in ``[0, 1]``."""
-        self._window.append(1 if eyes_closed else 0)
+    def update(self, eyes_closed: bool, timestamp: float) -> float:
+        """Record a sample and return the current PERCLOS in ``[0, 1]``.
+
+        Args:
+            eyes_closed: Whether the eyes are closed on this frame.
+            timestamp: Monotonic time of the frame, in seconds.
+
+        Returns:
+            The updated PERCLOS fraction.
+        """
+        self._samples.append((timestamp, bool(eyes_closed)))
+        cutoff = timestamp - self._window_seconds
+        while self._samples and self._samples[0][0] < cutoff:
+            self._samples.popleft()
         return self.value
 
     @property
     def value(self) -> float:
         """Current PERCLOS fraction; ``0.0`` before any samples are recorded."""
-        if not self._window:
+        if not self._samples:
             return 0.0
-        return sum(self._window) / len(self._window)
+        closed = sum(1 for _, eyes_closed in self._samples if eyes_closed)
+        return closed / len(self._samples)
+
+    @property
+    def sample_count(self) -> int:
+        """Number of samples currently inside the window."""
+        return len(self._samples)
 
     def reset(self) -> None:
         """Discard all accumulated samples."""
-        self._window.clear()
+        self._samples.clear()
 
 
 class DrowsinessMonitor:
-    """Combine per-frame EAR/MAR into a debounced drowsiness state."""
+    """Combine per-frame EAR/MAR into a debounced drowsiness state.
+
+    The state machine uses hysteresis: it enters :attr:`DrowsinessState.DROWSY`
+    once PERCLOS reaches ``perclos_drowsy`` and only returns to
+    :attr:`DrowsinessState.AWAKE` once it falls back to ``perclos_recover``,
+    preventing rapid flip-flopping near a single threshold.
+    """
 
     def __init__(self, thresholds: Thresholds) -> None:
         self._thresholds = thresholds
-        self._perclos = PerclosTracker(thresholds.perclos_window_frames)
+        self._perclos = PerclosTracker(thresholds.perclos_window_seconds)
         self._state = DrowsinessState.AWAKE
 
     @property
@@ -71,22 +101,26 @@ class DrowsinessMonitor:
         """The current PERCLOS fraction."""
         return self._perclos.value
 
-    def update(self, ear: float, mar: float) -> DrowsinessState:
+    def update(self, ear: float, mar: float, timestamp: float) -> DrowsinessState:
         """Advance the state machine by one frame.
 
         Args:
             ear: Current (averaged) eye aspect ratio.
             mar: Current mouth aspect ratio.
+            timestamp: Monotonic time of the frame, in seconds.
 
         Returns:
             The updated :class:`DrowsinessState`.
         """
         eyes_closed = ear < self._thresholds.ear_closed
-        perclos = self._perclos.update(eyes_closed)
-        if perclos >= self._thresholds.perclos_drowsy:
-            self._state = DrowsinessState.DROWSY
-        else:
-            self._state = DrowsinessState.AWAKE
+        perclos = self._perclos.update(eyes_closed, timestamp)
+
+        if self._state is DrowsinessState.AWAKE:
+            if perclos >= self._thresholds.perclos_drowsy:
+                self._state = DrowsinessState.DROWSY
+        else:  # currently DROWSY
+            if perclos <= self._thresholds.perclos_recover:
+                self._state = DrowsinessState.AWAKE
         return self._state
 
     def is_yawning(self, mar: float) -> bool:
