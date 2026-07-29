@@ -24,7 +24,13 @@ from src.alert import AudioAlarm
 from src.capture import VideoStream
 from src.config import Config, Thresholds
 from src.landmarks import FaceLandmarkerStream
-from src.metrics import average_ear, landmarks_to_array, mouth_aspect_ratio
+from src.metrics import (
+    average_ear,
+    blendshape_scores,
+    landmarks_to_array,
+    mouth_aspect_ratio,
+    yawn_from_blendshapes,
+)
 from src.state import DrowsinessMonitor, DrowsinessState
 
 
@@ -99,6 +105,7 @@ def draw_overlay(
     mar: float,
     perclos: float,
     state: DrowsinessState,
+    yawn: bool = False,
 ) -> None:
     """Draw the metrics HUD onto ``frame`` in place."""
     colour = (0, 0, 255) if state is DrowsinessState.DROWSY else (0, 255, 0)
@@ -108,6 +115,7 @@ def draw_overlay(
         f"MAR:     {mar:5.3f}",
         f"PERCLOS: {perclos * 100:5.1f}%",
         f"STATE:   {state.value}",
+        f"YAWN:    {'yes' if yawn else 'no'}",
     ]
     for i, text in enumerate(lines):
         cv2.putText(
@@ -159,6 +167,7 @@ def run(config: Config) -> None:
                 result = landmarker.latest_result()
 
                 ear = mar = 0.0
+                yawn = False
                 if result is not None and result.face_landmarks:
                     points = landmarks_to_array(
                         result.face_landmarks[0], frame.shape[1], frame.shape[0]
@@ -167,6 +176,16 @@ def run(config: Config) -> None:
                         points, config.indices.left_eye, config.indices.right_eye
                     )
                     mar = mouth_aspect_ratio(points, config.indices.mouth)
+                    # Cross-check the geometric MAR against the learned jawOpen
+                    # blendshape: a yawn is flagged only when both agree.
+                    yawn_geom = monitor.is_yawning(mar)
+                    yawn_bs = False
+                    if result.face_blendshapes:
+                        scores = blendshape_scores(result.face_blendshapes[0])
+                        yawn_bs = yawn_from_blendshapes(
+                            scores, config.thresholds.jaw_open_blendshape
+                        )
+                    yawn = yawn_geom and yawn_bs
 
                 state = monitor.update(ear, mar)
                 if state is DrowsinessState.DROWSY:
@@ -174,7 +193,7 @@ def run(config: Config) -> None:
                 else:
                     alarm.stop()
 
-                draw_overlay(frame, fps, ear, mar, monitor.perclos, state)
+                draw_overlay(frame, fps, ear, mar, monitor.perclos, state, yawn)
                 cv2.imshow("Driver Monitoring System", frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
