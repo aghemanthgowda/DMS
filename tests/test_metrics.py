@@ -6,14 +6,19 @@ checked against hand-computed values without a camera or MediaPipe.
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 import pytest
 
 from src.config import LandmarkIndices
 from src.metrics import (
+    HEAD_POSE_LANDMARKS,
+    MODEL_POINTS_3D,
     average_ear,
     blendshape_scores,
     blink_score,
+    default_camera_matrix,
+    estimate_head_pose,
     eye_aspect_ratio,
     eyes_closed_from_blendshapes,
     landmarks_to_array,
@@ -128,6 +133,59 @@ def test_yawn_from_blendshapes_thresholding() -> None:
     assert yawn_from_blendshapes({"jawOpen": 0.2}) is False
     # Missing key defaults to 0.0 -> no yawn.
     assert yawn_from_blendshapes({}) is False
+
+
+def test_default_camera_matrix_layout() -> None:
+    matrix = default_camera_matrix(640, 480)
+    assert matrix.shape == (3, 3)
+    assert matrix[0, 0] == pytest.approx(640.0)  # fx = width
+    assert matrix[1, 1] == pytest.approx(640.0)  # fy = width
+    assert matrix[0, 2] == pytest.approx(320.0)  # cx
+    assert matrix[1, 2] == pytest.approx(240.0)  # cy
+
+
+def _project_head(yaw_deg: float) -> np.ndarray:
+    """Render the 3D face model at a known yaw into a synthetic landmark array."""
+    width, height = 640, 480
+    camera_matrix = default_camera_matrix(width, height)
+    theta = np.radians(yaw_deg)
+    rotation_y = np.array(
+        [
+            [np.cos(theta), 0.0, np.sin(theta)],
+            [0.0, 1.0, 0.0],
+            [-np.sin(theta), 0.0, np.cos(theta)],
+        ]
+    )
+    rvec, _ = cv2.Rodrigues(rotation_y)
+    tvec = np.array([[0.0], [0.0], [600.0]])
+    image_points, _ = cv2.projectPoints(
+        MODEL_POINTS_3D, rvec, tvec, camera_matrix, np.zeros((4, 1))
+    )
+    landmarks = _blank()
+    for idx, point in zip(HEAD_POSE_LANDMARKS, image_points.reshape(-1, 2)):
+        landmarks[idx] = point
+    return landmarks
+
+
+def test_head_pose_recovers_frontal_orientation() -> None:
+    landmarks = _project_head(yaw_deg=0.0)
+    pose = estimate_head_pose(landmarks, default_camera_matrix(640, 480))
+    assert pose is not None
+    yaw, pitch, roll = pose
+    assert abs(yaw) < 2.0
+    assert abs(pitch) < 2.0
+    assert abs(roll) < 2.0
+
+
+def test_head_pose_recovers_known_yaw() -> None:
+    landmarks = _project_head(yaw_deg=25.0)
+    pose = estimate_head_pose(landmarks, default_camera_matrix(640, 480))
+    assert pose is not None
+    yaw, pitch, roll = pose
+    # solvePnP round-trip should recover the 25-degree yaw magnitude.
+    assert abs(yaw) == pytest.approx(25.0, abs=2.0)
+    assert abs(pitch) < 3.0
+    assert abs(roll) < 3.0
 
 
 def test_landmarks_to_array_scales_to_pixels() -> None:

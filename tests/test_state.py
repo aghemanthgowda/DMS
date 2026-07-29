@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from src.config import Thresholds
-from src.state import DrowsinessMonitor, DrowsinessState, PerclosTracker
+from src.state import (
+    DistractionTracker,
+    DrowsinessMonitor,
+    DrowsinessState,
+    PerclosTracker,
+)
 
 
 def test_perclos_is_fraction_of_closed_samples() -> None:
@@ -65,7 +70,7 @@ def test_monitor_hysteresis_does_not_flip_between_thresholds() -> None:
     assert monitor.state is DrowsinessState.DROWSY
 
     # Add open-eye samples until PERCLOS sits between recover (0.30) and
-    # drowsy (0.40). Still DROWSY because it has not fallen to recover.
+    # drowsy (0.40): 6 closed of 17 samples ~= 0.353. Still DROWSY.
     t = 10
     while monitor.perclos > 0.40:
         monitor.update(ear=0.30, mar=0.0, timestamp=float(t))
@@ -92,3 +97,29 @@ def test_is_yawning_uses_mar_threshold() -> None:
     monitor = DrowsinessMonitor(Thresholds(mar_yawn=0.6))
     assert monitor.is_yawning(0.8) is True
     assert monitor.is_yawning(0.4) is False
+
+
+def test_distraction_requires_sustained_off_axis_yaw() -> None:
+    tracker = DistractionTracker(yaw_threshold_deg=30.0, sustained_seconds=2.0)
+    # Off-axis but not yet sustained long enough.
+    assert tracker.update(yaw_deg=40.0, timestamp=0.0) is False
+    assert tracker.update(yaw_deg=40.0, timestamp=1.5) is False
+    # Sustained beyond 2 seconds -> distracted.
+    assert tracker.update(yaw_deg=40.0, timestamp=2.1) is True
+
+
+def test_distraction_resets_when_gaze_returns() -> None:
+    tracker = DistractionTracker(yaw_threshold_deg=30.0, sustained_seconds=2.0)
+    tracker.update(yaw_deg=40.0, timestamp=0.0)
+    assert tracker.update(yaw_deg=40.0, timestamp=3.0) is True
+    # Gaze returns to centre -> flag clears and timer resets.
+    assert tracker.update(yaw_deg=5.0, timestamp=3.5) is False
+    assert tracker.distracted is False
+    # A brief glance is not enough to re-trigger immediately.
+    assert tracker.update(yaw_deg=40.0, timestamp=3.6) is False
+
+
+def test_distraction_ignores_within_threshold_yaw() -> None:
+    tracker = DistractionTracker(yaw_threshold_deg=30.0, sustained_seconds=1.0)
+    for t in range(10):
+        assert tracker.update(yaw_deg=10.0, timestamp=float(t)) is False
