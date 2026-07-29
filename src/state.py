@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections import deque
 from enum import Enum
+from typing import Optional
 
 from .config import Thresholds
 
@@ -126,3 +127,43 @@ class DrowsinessMonitor:
     def is_yawning(self, mar: float) -> bool:
         """Return ``True`` when the mouth aspect ratio indicates a yawn."""
         return mar > self._thresholds.mar_yawn
+
+
+class DistractionTracker:
+    """Flag distraction when the head yaw stays off-axis for a sustained time.
+
+    A single glance away from the road should not raise an alert; only a yaw
+    that exceeds ``yaw_threshold_deg`` continuously for ``sustained_seconds``
+    counts as distraction.
+    """
+
+    def __init__(self, yaw_threshold_deg: float, sustained_seconds: float) -> None:
+        self._yaw_threshold_deg = yaw_threshold_deg
+        self._sustained_seconds = sustained_seconds
+        self._off_axis_since: Optional[float] = None
+        self._distracted = False
+
+    @property
+    def distracted(self) -> bool:
+        """Whether distraction is currently flagged."""
+        return self._distracted
+
+    def update(self, yaw_deg: float, timestamp: float) -> bool:
+        """Update with the latest head yaw and return the distraction flag.
+
+        Args:
+            yaw_deg: Current head yaw in degrees.
+            timestamp: Monotonic time of the frame, in seconds.
+
+        Returns:
+            ``True`` once the yaw has been off-axis for the sustained duration.
+        """
+        if abs(yaw_deg) > self._yaw_threshold_deg:
+            if self._off_axis_since is None:
+                self._off_axis_since = timestamp
+            elapsed = timestamp - self._off_axis_since
+            self._distracted = elapsed >= self._sustained_seconds
+        else:
+            self._off_axis_since = None
+            self._distracted = False
+        return self._distracted
