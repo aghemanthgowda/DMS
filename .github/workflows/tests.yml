@@ -1,0 +1,27 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        # The unit tests exercise the geometry module (NumPy + OpenCV) only;
+        # MediaPipe/pygame are not imported at test time, so we install the
+        # lightweight, headless subset for a fast and reliable build.
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy "opencv-python-headless>=4.9.0" pytest
+
+      - name: Run tests
+        run: pytest -v
