@@ -18,6 +18,7 @@ class HandGesture(NamedTuple):
 
     hand_at_mouth: bool  # possible smoking / phone-to-mouth / eating
     hand_at_ear: bool    # possible phone call
+    hand_at_eyes: bool = False  # rubbing eyes (fatigue cue)
 
 
 def min_distance(points_px: np.ndarray, target_px: Sequence[float]) -> float:
@@ -49,10 +50,12 @@ def detect_hand_gesture(
     left_ear_px: Sequence[float],
     right_ear_px: Sequence[float],
     face_width_px: float,
+    eyes_px: Sequence[Sequence[float]] | None = None,
     mouth_factor: float = 0.55,
     ear_factor: float = 0.50,
+    eye_factor: float = 0.45,
 ) -> HandGesture:
-    """Classify a hand's proximity to the mouth and ears.
+    """Classify a hand's proximity to the mouth, ears, and eyes.
 
     Args:
         hand_points_px: ``(21, 2)`` hand landmark pixels.
@@ -60,16 +63,24 @@ def detect_hand_gesture(
         left_ear_px: Left-ear/side-of-face pixel coordinate.
         right_ear_px: Right-ear/side-of-face pixel coordinate.
         face_width_px: Face width in pixels (used to scale thresholds).
+        eyes_px: Optional eye reference points to test for eye rubbing.
         mouth_factor: Mouth threshold as a fraction of face width.
         ear_factor: Ear threshold as a fraction of face width.
+        eye_factor: Eye threshold as a fraction of face width.
 
     Returns:
-        A :class:`HandGesture` with the two proximity flags.
+        A :class:`HandGesture` with the proximity flags.
     """
     max_mouth = mouth_factor * face_width_px
     max_ear = ear_factor * face_width_px
+    max_eye = eye_factor * face_width_px
     at_mouth = hand_near_point(hand_points_px, mouth_px, max_mouth)
     at_ear = hand_near_point(hand_points_px, left_ear_px, max_ear) or hand_near_point(
         hand_points_px, right_ear_px, max_ear
     )
-    return HandGesture(hand_at_mouth=at_mouth, hand_at_ear=at_ear)
+    at_eyes = False
+    if eyes_px is not None:
+        at_eyes = any(
+            hand_near_point(hand_points_px, eye, max_eye) for eye in eyes_px
+        )
+    return HandGesture(hand_at_mouth=at_mouth, hand_at_ear=at_ear, hand_at_eyes=at_eyes)
