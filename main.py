@@ -24,9 +24,10 @@ import numpy as np
 from src.alert import AudioAlarm
 from src.capture import VideoStream
 from src.config import Config, Thresholds
-from src.draw import draw_connections, draw_points
+from src.draw import draw_box, draw_connections, draw_points
 from src.gesture import detect_hand_gesture
 from src.hands import HandLandmarkerStream
+from src.objects import ObjectDetector, safety_violations
 from src.landmarks import FaceLandmarkerStream
 from src.metrics import (
     average_ear,
@@ -126,6 +127,8 @@ def draw_overlay(
     eyes_closed_seconds: float = 0.0,
     hand_at_mouth: bool = False,
     hand_at_ear: bool = False,
+    detected_objects: tuple[str, ...] = (),
+    object_alert: bool = False,
 ) -> None:
     """Draw the metrics HUD onto ``frame`` in place."""
     alert = (
@@ -134,6 +137,7 @@ def draw_overlay(
         or microsleep
         or hand_at_mouth
         or hand_at_ear
+        or object_alert
     )
     colour = (0, 0, 255) if alert else (0, 255, 0)
     status = state.value
@@ -154,6 +158,7 @@ def draw_overlay(
         f"YAW:     {yaw:5.1f} deg",
         f"HAND@MOUTH: {'yes' if hand_at_mouth else 'no'}",
         f"HAND@EAR: {'yes' if hand_at_ear else 'no'}",
+        f"OBJECTS: {', '.join(detected_objects) if detected_objects else 'none'}",
         f"STATE:   {status}",
         f"YAWN:    {'yes' if yawn else 'no'}",
     ]
@@ -207,6 +212,17 @@ def run(config: Config) -> None:
                 "Run scripts/download_model.py to enable it."
             )
 
+        # Object detection is optional: skip if ultralytics/model is unavailable.
+        detector: ObjectDetector | None = None
+        try:
+            detector = ObjectDetector(
+                config.object_model_path, config.object_confidence
+            )
+        except (ImportError, FileNotFoundError, OSError) as error:
+            print(f"Object detection disabled ({error}); pip install ultralytics.")
+
+        detections: list = []
+        frame_index = 0
         last_time = time.monotonic()
         fps = 0.0
 
@@ -293,6 +309,16 @@ def run(config: Config) -> None:
                         hand_at_mouth = hand_at_mouth or gesture.hand_at_mouth
                         hand_at_ear = hand_at_ear or gesture.hand_at_ear
 
+                # YOLO object detection, run every N frames (heavier than the
+                # landmark passes). Detections persist between runs for display.
+                frame_index += 1
+                if (
+                    detector is not None
+                    and frame_index % config.detect_every_n_frames == 0
+                ):
+                    detections = detector.detect(frame)
+                violations = safety_violations(detections)
+
                 # Low-latency microsleep alarm: reacts within ~1s of the eyes
                 # closing, independent of the slower PERCLOS fatigue measure.
                 microsleep = closure.update(eyes_closed, now)
@@ -312,6 +338,9 @@ def run(config: Config) -> None:
                         frame, hand_pts, HAND_CONNECTIONS, color=(255, 0, 0), thickness=2
                     )
                     draw_points(frame, hand_pts, color=(0, 0, 255), radius=3)
+                for det in detections:
+                    box_colour = (0, 0, 255) if det.label in violations else (0, 165, 255)
+                    draw_box(frame, det.box, f"{det.label} {det.confidence:.2f}", box_colour)
 
                 draw_overlay(
                     frame,
@@ -327,6 +356,8 @@ def run(config: Config) -> None:
                     closure.closed_duration,
                     hand_at_mouth,
                     hand_at_ear,
+                    tuple(sorted({det.label for det in detections})),
+                    bool(violations),
                 )
                 cv2.imshow("Driver Monitoring System", frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):

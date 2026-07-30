@@ -55,3 +55,33 @@ def draw_points(
     """
     for point in points_px:
         cv2.circle(frame, (int(point[0]), int(point[1])), radius, color, -1, cv2.LINE_AA)
+
+
+def draw_box(
+    frame: np.ndarray,
+    box: Sequence[int],
+    label: str,
+    color: Color = (0, 165, 255),
+    thickness: int = 2,
+) -> None:
+    """Draw a labelled bounding box, in place.
+
+    Args:
+        frame: BGR image to draw on.
+        box: ``(x1, y1, x2, y2)`` pixel coordinates.
+        label: Text label to render above the box.
+        color: BGR box/label colour.
+        thickness: Box line thickness in pixels.
+    """
+    x1, y1, x2, y2 = (int(v) for v in box)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+    cv2.putText(
+        frame,
+        label,
+        (x1, max(0, y1 - 6)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        color,
+        2,
+        cv2.LINE_AA,
+    )
