@@ -18,11 +18,15 @@ import time
 from dataclasses import replace
 
 import cv2
+import mediapipe as mp
 import numpy as np
 
 from src.alert import AudioAlarm
 from src.capture import VideoStream
 from src.config import Config, Thresholds
+from src.draw import draw_connections, draw_points
+from src.gesture import detect_hand_gesture
+from src.hands import HandLandmarkerStream
 from src.landmarks import FaceLandmarkerStream
 from src.metrics import (
     average_ear,
@@ -39,6 +43,9 @@ from src.state import (
     DrowsinessState,
     EyeClosureTracker,
 )
+
+FACE_CONNECTIONS = mp.solutions.face_mesh.FACEMESH_TESSELATION
+HAND_CONNECTIONS = mp.solutions.hands.HAND_CONNECTIONS
 
 
 def parse_args() -> argparse.Namespace:
@@ -117,15 +124,27 @@ def draw_overlay(
     distracted: bool = False,
     microsleep: bool = False,
     eyes_closed_seconds: float = 0.0,
+    hand_at_mouth: bool = False,
+    hand_at_ear: bool = False,
 ) -> None:
     """Draw the metrics HUD onto ``frame`` in place."""
-    alert = state is DrowsinessState.DROWSY or distracted or microsleep
+    alert = (
+        state is DrowsinessState.DROWSY
+        or distracted
+        or microsleep
+        or hand_at_mouth
+        or hand_at_ear
+    )
     colour = (0, 0, 255) if alert else (0, 255, 0)
     status = state.value
     if microsleep:
         status += " | MICROSLEEP"
     if distracted:
         status += " | DISTRACTED"
+    if hand_at_mouth:
+        status += " | PHONE/SMOKING"
+    if hand_at_ear:
+        status += " | PHONE-CALL"
     lines = [
         f"FPS:     {fps:5.1f}",
         f"EAR:     {ear:5.3f}",
@@ -133,6 +152,8 @@ def draw_overlay(
         f"PERCLOS: {perclos * 100:5.1f}%",
         f"EYES-SHUT: {eyes_closed_seconds:4.1f}s",
         f"YAW:     {yaw:5.1f} deg",
+        f"HAND@MOUTH: {'yes' if hand_at_mouth else 'no'}",
+        f"HAND@EAR: {'yes' if hand_at_ear else 'no'}",
         f"STATE:   {status}",
         f"YAWN:    {'yes' if yawn else 'no'}",
     ]
@@ -173,6 +194,19 @@ def run(config: Config) -> None:
         camera_matrix = default_camera_matrix(
             config.frame_width, config.frame_height
         )
+
+        # Hand tracking is optional: run without it if the model is missing.
+        hand_stream: HandLandmarkerStream | None = None
+        try:
+            hand_stream = HandLandmarkerStream(
+                config.hand_model_path, num_hands=config.max_hands
+            )
+        except FileNotFoundError:
+            print(
+                "Hand model not found; running without hand tracking. "
+                "Run scripts/download_model.py to enable it."
+            )
+
         last_time = time.monotonic()
         fps = 0.0
 
@@ -188,8 +222,12 @@ def run(config: Config) -> None:
                 if dt > 0:
                     fps = 0.9 * fps + 0.1 * (1.0 / dt) if fps else 1.0 / dt
 
+                width, height = frame.shape[1], frame.shape[0]
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                landmarker.detect_async(rgb, int(now * 1000))
+                timestamp_ms = int(now * 1000)
+                landmarker.detect_async(rgb, timestamp_ms)
+                if hand_stream is not None:
+                    hand_stream.detect_async(rgb, timestamp_ms)
                 result = landmarker.latest_result()
 
                 ear = mar = 0.0
@@ -197,10 +235,11 @@ def run(config: Config) -> None:
                 yaw = 0.0
                 distracted = False
                 eyes_closed = False
+                points = None
                 face_present = result is not None and bool(result.face_landmarks)
                 if face_present:
                     points = landmarks_to_array(
-                        result.face_landmarks[0], frame.shape[1], frame.shape[0]
+                        result.face_landmarks[0], width, height
                     )
                     ear = average_ear(
                         points, config.indices.left_eye, config.indices.right_eye
@@ -223,6 +262,37 @@ def run(config: Config) -> None:
                         yaw, _pitch, _roll = pose
                         distracted = distraction.update(yaw, now)
 
+                # Collect hand landmarks (pixel space) for drawing + gestures.
+                hands_px: list[np.ndarray] = []
+                if hand_stream is not None:
+                    hand_result = hand_stream.latest_result()
+                    if hand_result is not None and hand_result.hand_landmarks:
+                        hands_px = [
+                            landmarks_to_array(hand, width, height)
+                            for hand in hand_result.hand_landmarks
+                        ]
+
+                # Phone / smoking heuristic from hand-to-face proximity.
+                hand_at_mouth = False
+                hand_at_ear = False
+                if face_present and points is not None and hands_px:
+                    idx = config.indices
+                    face_width = float(
+                        np.linalg.norm(points[idx.left_ear] - points[idx.right_ear])
+                    )
+                    for hand_pts in hands_px:
+                        gesture = detect_hand_gesture(
+                            hand_pts,
+                            points[idx.mouth_center],
+                            points[idx.left_ear],
+                            points[idx.right_ear],
+                            face_width,
+                            config.thresholds.hand_mouth_factor,
+                            config.thresholds.hand_ear_factor,
+                        )
+                        hand_at_mouth = hand_at_mouth or gesture.hand_at_mouth
+                        hand_at_ear = hand_at_ear or gesture.hand_at_ear
+
                 # Low-latency microsleep alarm: reacts within ~1s of the eyes
                 # closing, independent of the slower PERCLOS fatigue measure.
                 microsleep = closure.update(eyes_closed, now)
@@ -231,6 +301,17 @@ def run(config: Config) -> None:
                     alarm.start()
                 else:
                     alarm.stop()
+
+                # Overlay the landmark maps for the demo.
+                if face_present and points is not None:
+                    draw_connections(
+                        frame, points, FACE_CONNECTIONS, color=(0, 255, 0), thickness=1
+                    )
+                for hand_pts in hands_px:
+                    draw_connections(
+                        frame, hand_pts, HAND_CONNECTIONS, color=(255, 0, 0), thickness=2
+                    )
+                    draw_points(frame, hand_pts, color=(0, 0, 255), radius=3)
 
                 draw_overlay(
                     frame,
@@ -244,12 +325,16 @@ def run(config: Config) -> None:
                     distracted,
                     microsleep,
                     closure.closed_duration,
+                    hand_at_mouth,
+                    hand_at_ear,
                 )
                 cv2.imshow("Driver Monitoring System", frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
         finally:
             alarm.close()
+            if hand_stream is not None:
+                hand_stream.close()
             cv2.destroyAllWindows()
 
 

@@ -39,7 +39,12 @@ def load_config(path: str | Path) -> Config:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     thresholds = Thresholds(**data.get("thresholds", {}))
     indices_data = data.get("indices", {})
-    indices = LandmarkIndices(**{key: tuple(value) for key, value in indices_data.items()})
+    indices = LandmarkIndices(
+        **{
+            key: (tuple(value) if isinstance(value, list) else value)
+            for key, value in indices_data.items()
+        }
+    )
     scalars = {
         key: value
         for key, value in data.items()
