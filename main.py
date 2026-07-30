@@ -76,6 +76,25 @@ def parse_args() -> argparse.Namespace:
         default=Config.model_path,
         help="path to the face_landmarker_v2 .task bundle",
     )
+    parser.add_argument(
+        "--no-hands", action="store_true", help="disable hand tracking (faster)"
+    )
+    parser.add_argument(
+        "--no-objects",
+        action="store_true",
+        help="disable YOLO object detection (faster)",
+    )
+    parser.add_argument(
+        "--detect-every",
+        type=int,
+        default=Config.detect_every_n_frames,
+        help="run object detection every N frames (higher = faster)",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="print startup and per-detection diagnostics to the console",
+    )
     return parser.parse_args()
 
 
@@ -135,6 +154,7 @@ def draw_overlay(
     eyes_closed_seconds: float = 0.0,
     hand_at_mouth: bool = False,
     hand_at_ear: bool = False,
+    hand_at_eyes: bool = False,
     detected_objects: tuple[str, ...] = (),
     object_alert: bool = False,
 ) -> None:
@@ -145,6 +165,7 @@ def draw_overlay(
         or microsleep
         or hand_at_mouth
         or hand_at_ear
+        or hand_at_eyes
         or object_alert
     )
     colour = (0, 0, 255) if alert else (0, 255, 0)
@@ -157,6 +178,8 @@ def draw_overlay(
         status += " | PHONE/SMOKING"
     if hand_at_ear:
         status += " | PHONE-CALL"
+    if hand_at_eyes:
+        status += " | EYE-RUB"
     lines = [
         f"FPS:     {fps:5.1f}",
         f"EAR:     {ear:5.3f}",
@@ -166,6 +189,7 @@ def draw_overlay(
         f"YAW:     {yaw:5.1f} deg",
         f"HAND@MOUTH: {'yes' if hand_at_mouth else 'no'}",
         f"HAND@EAR: {'yes' if hand_at_ear else 'no'}",
+        f"HAND@EYES: {'yes' if hand_at_eyes else 'no'}",
         f"OBJECTS: {', '.join(detected_objects) if detected_objects else 'none'}",
         f"STATE:   {status}",
         f"YAWN:    {'yes' if yawn else 'no'}",
@@ -208,26 +232,39 @@ def run(config: Config) -> None:
             config.frame_width, config.frame_height
         )
 
-        # Hand tracking is optional: run without it if the model is missing.
-        hand_stream: HandLandmarkerStream | None = None
-        try:
-            hand_stream = HandLandmarkerStream(
-                config.hand_model_path, num_hands=config.max_hands
-            )
-        except FileNotFoundError:
-            print(
-                "Hand model not found; running without hand tracking. "
-                "Run scripts/download_model.py to enable it."
-            )
+        print("[DMS] Face landmarker: OK")
 
-        # Object detection is optional: skip if ultralytics/model is unavailable.
+        # Hand tracking is optional: run without it if disabled or model missing.
+        hand_stream: HandLandmarkerStream | None = None
+        if config.hand_tracking_enabled:
+            try:
+                hand_stream = HandLandmarkerStream(
+                    config.hand_model_path, num_hands=config.max_hands
+                )
+                print("[DMS] Hand tracking: ON")
+            except FileNotFoundError:
+                print(
+                    "[DMS] Hand tracking: OFF (model missing; run "
+                    "scripts/download_model.py)"
+                )
+        else:
+            print("[DMS] Hand tracking: OFF (--no-hands)")
+
+        # Object detection is optional: skip if disabled or ultralytics missing.
         detector: ObjectDetector | None = None
-        try:
-            detector = ObjectDetector(
-                config.object_model_path, config.object_confidence
-            )
-        except (ImportError, FileNotFoundError, OSError) as error:
-            print(f"Object detection disabled ({error}); pip install ultralytics.")
+        if config.object_detection_enabled:
+            try:
+                detector = ObjectDetector(
+                    config.object_model_path, config.object_confidence
+                )
+                print(f"[DMS] Object detection: ON ({config.object_model_path})")
+            except (ImportError, FileNotFoundError, OSError) as error:
+                print(
+                    f"[DMS] Object detection: OFF ({error}). "
+                    "Install with: pip install ultralytics"
+                )
+        else:
+            print("[DMS] Object detection: OFF (--no-objects)")
 
         detections: list = []
         frame_index = 0
@@ -296,14 +333,16 @@ def run(config: Config) -> None:
                             for hand in hand_result.hand_landmarks
                         ]
 
-                # Phone / smoking heuristic from hand-to-face proximity.
+                # Phone / smoking / eye-rub heuristics from hand-to-face proximity.
                 hand_at_mouth = False
                 hand_at_ear = False
+                hand_at_eyes = False
                 if face_present and points is not None and hands_px:
                     idx = config.indices
                     face_width = float(
                         np.linalg.norm(points[idx.left_ear] - points[idx.right_ear])
                     )
+                    eyes = [points[idx.left_eye[0]], points[idx.right_eye[0]]]
                     for hand_pts in hands_px:
                         gesture = detect_hand_gesture(
                             hand_pts,
@@ -311,11 +350,14 @@ def run(config: Config) -> None:
                             points[idx.left_ear],
                             points[idx.right_ear],
                             face_width,
+                            eyes,
                             config.thresholds.hand_mouth_factor,
                             config.thresholds.hand_ear_factor,
+                            config.thresholds.hand_eye_factor,
                         )
                         hand_at_mouth = hand_at_mouth or gesture.hand_at_mouth
                         hand_at_ear = hand_at_ear or gesture.hand_at_ear
+                        hand_at_eyes = hand_at_eyes or gesture.hand_at_eyes
 
                 # YOLO object detection, run every N frames (heavier than the
                 # landmark passes). Detections persist between runs for display.
@@ -325,6 +367,12 @@ def run(config: Config) -> None:
                     and frame_index % config.detect_every_n_frames == 0
                 ):
                     detections = detector.detect(frame)
+                    if config.debug:
+                        print(
+                            "[DMS] objects:",
+                            [(d.label, round(d.confidence, 2)) for d in detections]
+                            or "none",
+                        )
                 violations = safety_violations(detections)
 
                 # Low-latency microsleep alarm: reacts within ~1s of the eyes
@@ -336,11 +384,14 @@ def run(config: Config) -> None:
                 else:
                     alarm.stop()
 
-                # Overlay the landmark maps for the demo.
+                # Overlay the landmark maps for the demo. Points are always drawn
+                # so the face is visibly tracked even if the mesh connections
+                # (FACE_CONNECTIONS) could not be imported.
                 if face_present and points is not None:
                     draw_connections(
                         frame, points, FACE_CONNECTIONS, color=(0, 255, 0), thickness=1
                     )
+                    draw_points(frame, points, color=(0, 255, 0), radius=1)
                 for hand_pts in hands_px:
                     draw_connections(
                         frame, hand_pts, HAND_CONNECTIONS, color=(255, 0, 0), thickness=2
@@ -364,6 +415,7 @@ def run(config: Config) -> None:
                     closure.closed_duration,
                     hand_at_mouth,
                     hand_at_ear,
+                    hand_at_eyes,
                     tuple(sorted({det.label for det in detections})),
                     bool(violations),
                 )
@@ -385,6 +437,10 @@ def main() -> None:
         model_path=args.model,
         audio_enabled=not args.no_audio,
         calibrate=args.calibrate,
+        hand_tracking_enabled=not args.no_hands,
+        object_detection_enabled=not args.no_objects,
+        detect_every_n_frames=args.detect_every,
+        debug=args.debug,
     )
     run(config)
 

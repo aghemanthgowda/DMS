@@ -80,6 +80,9 @@ class Thresholds:
     hand_ear_factor: float = 0.50
     """Hand-to-ear distance threshold as a fraction of face width."""
 
+    hand_eye_factor: float = 0.45
+    """Hand-to-eye distance threshold as a fraction of face width (eye rubbing)."""
+
 
 @dataclass(frozen=True)
 class Config:
@@ -92,8 +95,11 @@ class Config:
     hand_model_path: str = "models/hand_landmarker.task"
     max_hands: int = 2
     object_model_path: str = "yolov8n.pt"
-    object_confidence: float = 0.35
+    object_confidence: float = 0.30
     detect_every_n_frames: int = 5
+    hand_tracking_enabled: bool = True
+    object_detection_enabled: bool = True
+    debug: bool = False
     alarm_sound: str = "assets/alarm.wav"
     audio_enabled: bool = True
     calibrate: bool = False
