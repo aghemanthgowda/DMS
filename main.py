@@ -18,7 +18,6 @@ import time
 from dataclasses import replace
 
 import cv2
-import mediapipe as mp
 import numpy as np
 
 from src.alert import AudioAlarm
@@ -45,8 +44,17 @@ from src.state import (
     EyeClosureTracker,
 )
 
-FACE_CONNECTIONS = mp.solutions.face_mesh.FACEMESH_TESSELATION
-HAND_CONNECTIONS = mp.solutions.hands.HAND_CONNECTIONS
+# Import the landmark connection constants directly from their submodules.
+# ``import mediapipe as mp; mp.solutions`` is not always populated (e.g. on some
+# Windows/newer builds it raises AttributeError), so we avoid that access path.
+try:
+    from mediapipe.python.solutions.face_mesh_connections import (
+        FACEMESH_TESSELATION as FACE_CONNECTIONS,
+    )
+    from mediapipe.python.solutions.hands_connections import HAND_CONNECTIONS
+except ImportError:  # pragma: no cover - overlay lines are optional
+    FACE_CONNECTIONS = frozenset()
+    HAND_CONNECTIONS = frozenset()
 
 
 def parse_args() -> argparse.Namespace:
