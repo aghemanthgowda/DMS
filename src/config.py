@@ -44,6 +44,9 @@ class Thresholds:
     perclos_window_seconds: float = 60.0
     """Length of the rolling time window used to estimate PERCLOS."""
 
+    eye_closed_alarm_seconds: float = 1.0
+    """Continuous eye-closure duration that triggers an immediate microsleep alarm."""
+
     calibration_seconds: float = 5.0
     """Seconds of baseline sampling when ``--calibrate`` is used."""
 
