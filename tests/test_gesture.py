@@ -45,3 +45,17 @@ def test_hand_resting_low_triggers_nothing() -> None:
     gesture = detect_hand_gesture(_hand_at(100.0, 400.0), MOUTH, LEFT_EAR, RIGHT_EAR, FACE_WIDTH)
     assert gesture.hand_at_mouth is False
     assert gesture.hand_at_ear is False
+    assert gesture.hand_at_eyes is False
+
+
+def test_hand_at_eyes_detected() -> None:
+    eyes = [(80.0, 90.0), (120.0, 90.0)]
+    gesture = detect_hand_gesture(
+        _hand_at(120.0, 92.0), MOUTH, LEFT_EAR, RIGHT_EAR, FACE_WIDTH, eyes_px=eyes
+    )
+    assert gesture.hand_at_eyes is True
+
+
+def test_no_eyes_reference_means_no_eye_gesture() -> None:
+    gesture = detect_hand_gesture(_hand_at(120.0, 92.0), MOUTH, LEFT_EAR, RIGHT_EAR, FACE_WIDTH)
+    assert gesture.hand_at_eyes is False
