@@ -24,6 +24,15 @@ class LandmarkIndices:
     right_eye: tuple[int, int, int, int, int, int] = (33, 160, 158, 133, 153, 144)
     mouth: tuple[int, int, int, int, int, int] = (61, 0, 13, 291, 14, 17)
 
+    mouth_center: int = 13
+    """Upper-lip-centre landmark, used as the mouth reference for gestures."""
+
+    left_ear: int = 454
+    """Left side-of-face landmark (~ear), used for phone/head-width geometry."""
+
+    right_ear: int = 234
+    """Right side-of-face landmark (~ear), used for phone/head-width geometry."""
+
 
 @dataclass(frozen=True)
 class Thresholds:
@@ -65,6 +74,12 @@ class Thresholds:
     distraction_seconds: float = 2.0
     """Seconds of sustained off-axis yaw before distraction is flagged."""
 
+    hand_mouth_factor: float = 0.55
+    """Hand-to-mouth distance threshold as a fraction of face width."""
+
+    hand_ear_factor: float = 0.50
+    """Hand-to-ear distance threshold as a fraction of face width."""
+
 
 @dataclass(frozen=True)
 class Config:
@@ -74,6 +89,8 @@ class Config:
     frame_width: int = 640
     frame_height: int = 480
     model_path: str = "models/face_landmarker_v2.task"
+    hand_model_path: str = "models/hand_landmarker.task"
+    max_hands: int = 2
     alarm_sound: str = "assets/alarm.wav"
     audio_enabled: bool = True
     calibrate: bool = False
