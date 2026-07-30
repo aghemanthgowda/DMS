@@ -33,7 +33,12 @@ from src.metrics import (
     mouth_aspect_ratio,
     yawn_from_blendshapes,
 )
-from src.state import DistractionTracker, DrowsinessMonitor, DrowsinessState
+from src.state import (
+    DistractionTracker,
+    DrowsinessMonitor,
+    DrowsinessState,
+    EyeClosureTracker,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -110,16 +115,23 @@ def draw_overlay(
     yawn: bool = False,
     yaw: float = 0.0,
     distracted: bool = False,
+    microsleep: bool = False,
+    eyes_closed_seconds: float = 0.0,
 ) -> None:
     """Draw the metrics HUD onto ``frame`` in place."""
-    alert = state is DrowsinessState.DROWSY or distracted
+    alert = state is DrowsinessState.DROWSY or distracted or microsleep
     colour = (0, 0, 255) if alert else (0, 255, 0)
-    status = state.value + (" | DISTRACTED" if distracted else "")
+    status = state.value
+    if microsleep:
+        status += " | MICROSLEEP"
+    if distracted:
+        status += " | DISTRACTED"
     lines = [
         f"FPS:     {fps:5.1f}",
         f"EAR:     {ear:5.3f}",
         f"MAR:     {mar:5.3f}",
         f"PERCLOS: {perclos * 100:5.1f}%",
+        f"EYES-SHUT: {eyes_closed_seconds:4.1f}s",
         f"YAW:     {yaw:5.1f} deg",
         f"STATE:   {status}",
         f"YAWN:    {'yes' if yawn else 'no'}",
@@ -153,6 +165,7 @@ def run(config: Config) -> None:
                 config = replace(config, thresholds=thresholds)
 
         monitor = DrowsinessMonitor(thresholds)
+        closure = EyeClosureTracker(thresholds.eye_closed_alarm_seconds)
         distraction = DistractionTracker(
             thresholds.yaw_distraction_deg, thresholds.distraction_seconds
         )
@@ -183,13 +196,16 @@ def run(config: Config) -> None:
                 yawn = False
                 yaw = 0.0
                 distracted = False
-                if result is not None and result.face_landmarks:
+                eyes_closed = False
+                face_present = result is not None and bool(result.face_landmarks)
+                if face_present:
                     points = landmarks_to_array(
                         result.face_landmarks[0], frame.shape[1], frame.shape[0]
                     )
                     ear = average_ear(
                         points, config.indices.left_eye, config.indices.right_eye
                     )
+                    eyes_closed = ear < config.thresholds.ear_closed
                     mar = mouth_aspect_ratio(points, config.indices.mouth)
                     # Cross-check the geometric MAR against the learned jawOpen
                     # blendshape: a yawn is flagged only when both agree.
@@ -207,14 +223,27 @@ def run(config: Config) -> None:
                         yaw, _pitch, _roll = pose
                         distracted = distraction.update(yaw, now)
 
+                # Low-latency microsleep alarm: reacts within ~1s of the eyes
+                # closing, independent of the slower PERCLOS fatigue measure.
+                microsleep = closure.update(eyes_closed, now)
                 state = monitor.update(ear, mar, now)
-                if state is DrowsinessState.DROWSY or distracted:
+                if state is DrowsinessState.DROWSY or distracted or microsleep:
                     alarm.start()
                 else:
                     alarm.stop()
 
                 draw_overlay(
-                    frame, fps, ear, mar, monitor.perclos, state, yawn, yaw, distracted
+                    frame,
+                    fps,
+                    ear,
+                    mar,
+                    monitor.perclos,
+                    state,
+                    yawn,
+                    yaw,
+                    distracted,
+                    microsleep,
+                    closure.closed_duration,
                 )
                 cv2.imshow("Driver Monitoring System", frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):

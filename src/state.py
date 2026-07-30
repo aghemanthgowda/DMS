@@ -129,6 +129,63 @@ class DrowsinessMonitor:
         return mar > self._thresholds.mar_yawn
 
 
+class EyeClosureTracker:
+    """Fire an immediate alarm when the eyes stay closed past a short threshold.
+
+    This is the low-latency counterpart to PERCLOS: PERCLOS integrates eye
+    closure over ~60s to judge fatigue, whereas this tracker reacts within about
+    a second to a sustained closure (a microsleep), so a driver who shuts their
+    eyes is flagged almost immediately.
+    """
+
+    def __init__(self, alarm_seconds: float) -> None:
+        """Create the tracker.
+
+        Args:
+            alarm_seconds: Continuous closed duration that raises the alarm.
+
+        Raises:
+            ValueError: If ``alarm_seconds`` is not positive.
+        """
+        if alarm_seconds <= 0:
+            raise ValueError("alarm_seconds must be positive")
+        self._alarm_seconds = alarm_seconds
+        self._closed_since: Optional[float] = None
+        self._duration = 0.0
+        self._alarm = False
+
+    @property
+    def alarm(self) -> bool:
+        """Whether the microsleep alarm is currently active."""
+        return self._alarm
+
+    @property
+    def closed_duration(self) -> float:
+        """How long the eyes have been continuously closed, in seconds."""
+        return self._duration
+
+    def update(self, eyes_closed: bool, timestamp: float) -> bool:
+        """Update with the latest closure state and return the alarm flag.
+
+        Args:
+            eyes_closed: Whether the eyes are closed on this frame.
+            timestamp: Monotonic time of the frame, in seconds.
+
+        Returns:
+            ``True`` once the eyes have been closed for ``alarm_seconds``.
+        """
+        if eyes_closed:
+            if self._closed_since is None:
+                self._closed_since = timestamp
+            self._duration = timestamp - self._closed_since
+            self._alarm = self._duration >= self._alarm_seconds
+        else:
+            self._closed_since = None
+            self._duration = 0.0
+            self._alarm = False
+        return self._alarm
+
+
 class DistractionTracker:
     """Flag distraction when the head yaw stays off-axis for a sustained time.
 
