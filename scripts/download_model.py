@@ -1,24 +1,29 @@
-"""Download the MediaPipe ``face_landmarker_v2`` task bundle into ``models/``.
+"""Download the MediaPipe ``.task`` bundles used by the DMS into ``models/``.
 
-The ``.task`` bundle is intentionally not committed to the repository (it is
-gitignored). Run this once before starting the monitor::
+Downloads both the face-landmarker and hand-landmarker bundles. They are
+intentionally not committed (gitignored). Run once before starting the monitor::
 
     python scripts/download_model.py
 """
 
 from __future__ import annotations
 
-import argparse
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-MODEL_URL = (
-    "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
-    "face_landmarker/float16/1/face_landmarker.task"
-)
-DEFAULT_DEST = Path("models") / "face_landmarker_v2.task"
+MODELS: dict[str, str] = {
+    "face_landmarker_v2.task": (
+        "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+        "face_landmarker/float16/1/face_landmarker.task"
+    ),
+    "hand_landmarker.task": (
+        "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
+        "hand_landmarker/float16/1/hand_landmarker.task"
+    ),
+}
+MODELS_DIR = Path("models")
 
 
 def download(url: str, dest: Path) -> None:
@@ -39,25 +44,17 @@ def download(url: str, dest: Path) -> None:
 
 
 def main() -> int:
-    """Parse arguments and download the model bundle."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--url", default=MODEL_URL, help="model bundle URL to download"
-    )
-    parser.add_argument(
-        "--dest", type=Path, default=DEFAULT_DEST, help="destination path"
-    )
-    args = parser.parse_args()
-
-    if args.dest.exists():
-        print(f"{args.dest} already exists; nothing to do.")
-        return 0
-
-    try:
-        download(args.url, args.dest)
-    except urllib.error.URLError as error:
-        print(f"Download failed: {error}", file=sys.stderr)
-        return 1
+    """Download every model bundle that is not already present."""
+    for filename, url in MODELS.items():
+        dest = MODELS_DIR / filename
+        if dest.exists():
+            print(f"{dest} already exists; skipping.")
+            continue
+        try:
+            download(url, dest)
+        except urllib.error.URLError as error:
+            print(f"Download failed for {filename}: {error}", file=sys.stderr)
+            return 1
     return 0
 
 
