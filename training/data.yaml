@@ -1,0 +1,25 @@
+# Ultralytics YOLO dataset config for in-cabin safety objects.
+#
+# Point `path` at your dataset root, which must contain images/ and labels/ in
+# YOLO format (one .txt per image: "<class_id> <cx> <cy> <w> <h>" normalised).
+#
+#   dataset/
+#     images/{train,val}/*.jpg
+#     labels/{train,val}/*.txt
+#
+# Class ids below MUST match the order used when you annotated the data. These
+# names line up with SAFETY_CLASS_MAP in src/objects.py so the trained model
+# slots straight into the live pipeline.
+
+path: ./dataset
+train: images/train
+val: images/val
+
+names:
+  0: cigarette
+  1: seatbelt
+  2: no_seatbelt
+  3: sunglasses
+  4: phone
+  5: food
+  6: drink

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from src.draw import draw_connections, draw_points
+from src.draw import draw_box, draw_connections, draw_points
 
 
 def _blank_image() -> np.ndarray:
@@ -30,4 +30,10 @@ def test_draw_points_marks_pixels() -> None:
     frame = _blank_image()
     points = np.array([[25, 25]], dtype=np.float64)
     draw_points(frame, points, color=(0, 0, 255), radius=3)
+    assert frame.any()
+
+
+def test_draw_box_marks_pixels() -> None:
+    frame = _blank_image()
+    draw_box(frame, (5, 5, 40, 40), "phone 0.90", color=(0, 165, 255))
     assert frame.any()
