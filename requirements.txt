@@ -3,3 +3,8 @@ opencv-python>=4.9.0
 mediapipe>=0.10.9
 numpy>=1.26.0
 pygame>=2.5.0
+
+# YOLO object detection (phone / food / drink out of the box; cigarette,
+# seatbelt and sunglasses via a custom-trained model — see training/).
+# Pulls in PyTorch; on first run a stock model (e.g. yolov8n.pt) auto-downloads.
+ultralytics>=8.2.0

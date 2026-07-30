@@ -91,6 +91,9 @@ class Config:
     model_path: str = "models/face_landmarker_v2.task"
     hand_model_path: str = "models/hand_landmarker.task"
     max_hands: int = 2
+    object_model_path: str = "yolov8n.pt"
+    object_confidence: float = 0.35
+    detect_every_n_frames: int = 5
     alarm_sound: str = "assets/alarm.wav"
     audio_enabled: bool = True
     calibrate: bool = False
